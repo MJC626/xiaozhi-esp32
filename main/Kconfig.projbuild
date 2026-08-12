@@ -367,6 +367,9 @@ choice BOARD_TYPE
     config BOARD_TYPE_MOVECALL_MOJI2_ESP32C5
         bool "Movecall Moji 2.0"
         depends on IDF_TARGET_ESP32C5
+    config BOARD_TYPE_MY_CUSTOM_BOARD
+        bool "My Custom Board (CO5300 AMOLED)"
+        depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_XINGZHI_ABS_2_0
         bool "Nologo Xingzhi ABS 2.0 (无名科技星智)"
         depends on IDF_TARGET_ESP32S3
@@ -421,9 +424,6 @@ choice BOARD_TYPE
     config BOARD_TYPE_WAVESHARE_ESP32_C5_TOUCH_LCD_1_69
         bool "Waveshare ESP32-C5-Touch-LCD-1.69"
         depends on IDF_TARGET_ESP32C5
-    config BOARD_TYPE_WAVESHARE_ESP32_C6_EPAPER_1_54
-        bool "Waveshare ESP32-C6-e-Paper-1.54"
-        depends on IDF_TARGET_ESP32C6
     config BOARD_TYPE_WAVESHARE_ESP32_C6_LCD_0_85
         bool "Waveshare ESP32-C6-LCD-0.85"
         depends on IDF_TARGET_ESP32C6
@@ -580,9 +580,6 @@ choice BOARD_TYPE
     config BOARD_TYPE_WDMOMO_CGC_144
         bool "WDMomo ESP32-CGC-144"
         depends on IDF_TARGET_ESP32
-    config BOARD_TYPE_WK_ESP32S3_DEV
-        bool "WK ESP32-S3 Dev Board (维控智能开发板)"
-        depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_XMINI_C3
         bool "Xmini C3"
         depends on IDF_TARGET_ESP32C3
@@ -690,24 +687,8 @@ choice ESP32_S3_LCD_EV_BOARD_VERSION
         bool "Espressif ESP32-S3-LCD-EV-Board-MB v1.5"
 endchoice
 
-
-choice WK_ESP32S3_DEV_DISPLAY_TYPE
-    depends on BOARD_TYPE_WK_ESP32S3_DEV
-    prompt "WK ESP32S3 DEV Display Type"
-    default WK_ESP32S3_DEV_DISPLAY_OLED
-    help
-        Select display type for WK ESP32S3 DEV board.
-
-    config WK_ESP32S3_DEV_DISPLAY_OLED
-        bool "OLED"
-
-    config WK_ESP32S3_DEV_DISPLAY_LCD
-        bool "LCD"
-
-endchoice
-
 choice DISPLAY_OLED_TYPE
-    depends on BOARD_TYPE_BREAD_COMPACT_WIFI || BOARD_TYPE_BREAD_COMPACT_ML307 || BOARD_TYPE_BREAD_COMPACT_NT26 || BOARD_TYPE_BREAD_COMPACT_ESP32 || BOARD_TYPE_HU_087 || (BOARD_TYPE_WK_ESP32S3_DEV && WK_ESP32S3_DEV_DISPLAY_OLED)
+    depends on BOARD_TYPE_BREAD_COMPACT_WIFI || BOARD_TYPE_BREAD_COMPACT_ML307 || BOARD_TYPE_BREAD_COMPACT_NT26 || BOARD_TYPE_BREAD_COMPACT_ESP32 || BOARD_TYPE_HU_087
     prompt "OLED Type"
     default OLED_SSD1306_128X32
     help
@@ -720,9 +701,8 @@ choice DISPLAY_OLED_TYPE
         bool "SH1106 128*64"
 endchoice
 
-
 choice DISPLAY_LCD_TYPE
-    depends on BOARD_TYPE_BREAD_COMPACT_WIFI_LCD || BOARD_TYPE_BREAD_COMPACT_ESP32_LCD || BOARD_TYPE_WDMOMO_CGC || BOARD_TYPE_BREAD_COMPACT_WIFI_CAM || (BOARD_TYPE_WK_ESP32S3_DEV && WK_ESP32S3_DEV_DISPLAY_LCD)
+    depends on BOARD_TYPE_BREAD_COMPACT_WIFI_LCD || BOARD_TYPE_BREAD_COMPACT_ESP32_LCD || BOARD_TYPE_WDMOMO_CGC || BOARD_TYPE_BREAD_COMPACT_WIFI_CAM
     prompt "LCD Type"
     default LCD_ST7789_240X320
     help
@@ -757,24 +737,9 @@ choice DISPLAY_LCD_TYPE
         bool "ILI9341 240*320, Non-IPS"
     config LCD_GC9A01_240X240
         bool "GC9A01 240*240 Circle"
-    config LCD_NV3030B_240X320
-        bool "NV3030B, 分辨率240*320, IPS"
     config LCD_CUSTOM
         bool "Custom LCD (自定义屏幕参数)"
 endchoice
-
-choice WK_BOARD_TYPE
-    depends on BOARD_TYPE_WK_ESP32S3_DEV
-    prompt "BOARD_TYPE_WK_ESP32S3_DEV"
-    default BOARD_NO_MOTOR_CONTROL
-    help
-        Board Type
-    config BOARD_HAVE_MOTOR_CONTROL
-        bool "带电机驱动"
-    config BOARD_NO_MOTOR_CONTROL
-        bool "不带电机驱动"    
-endchoice
-
 
 choice DISPLAY_ESP32S3_KORVO2_V3
     depends on BOARD_TYPE_ESP32_S3_KORVO_2_V3 || BOARD_TYPE_ESP32_S3_KORVO_2_V3_RNDIS

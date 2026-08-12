@@ -1,0 +1,14 @@
+{
+    "type": "my-custom-board",
+    "target": "esp32s3",
+    "builds": [
+        {
+            "name": "my-custom-board",
+            "sdkconfig_append": [
+                "CONFIG_USE_WECHAT_MESSAGE_STYLE=n",
+                "CONFIG_BOARD_TYPE_MY_CUSTOM_BOARD=y",
+                "CONFIG_USE_DEVICE_AEC=y"
+            ]
+        }
+    ]
+}
