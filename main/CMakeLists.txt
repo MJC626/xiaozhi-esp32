@@ -1151,7 +1151,22 @@ if(CONFIG_BOARD_TYPE_ESP_VOCAT OR CONFIG_BOARD_TYPE_MY_CUSTOM_BOARD)
         file(MAKE_DIRECTORY "${EMOTE_EXTERNAL_PATH}/360_360")
         file(MAKE_DIRECTORY "${EMOTE_EXTERNAL_PATH}/emoji_large")
         file(COPY "${EMOTE_ASSETS_PATH}/emoji_large/" DESTINATION "${EMOTE_EXTERNAL_PATH}/emoji_large")
+        file(GLOB EMOTE_BIN_FILES "${EMOTE_ASSETS_PATH}/emoji_large/*.bin")
+        if(EMOTE_BIN_FILES)
+            file(COPY ${EMOTE_BIN_FILES} DESTINATION "${EMOTE_EXTERNAL_PATH}/360_360")
+        endif()
         file(COPY "${EMOTE_ASSETS_PATH}/360_360/layout.json" DESTINATION "${EMOTE_EXTERNAL_PATH}/360_360")
+        file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/boards/espressif/esp-vocat/emoji/low_battery.eaf"
+             DESTINATION "${EMOTE_EXTERNAL_PATH}/emoji_large")
+        file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/boards/espressif/esp-vocat/emoji/battery_connected.eaf"
+             DESTINATION "${EMOTE_EXTERNAL_PATH}/emoji_large")
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/assets/360_360/config.json")
+            file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/assets/360_360/config.json"
+                 DESTINATION "${EMOTE_EXTERNAL_PATH}/360_360")
+        else()
+            file(COPY "${EMOTE_ASSETS_PATH}/360_360/config.json"
+                 DESTINATION "${EMOTE_EXTERNAL_PATH}/360_360")
+        endif()
         if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/assets/360_360/emote.json")
             file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/assets/360_360/emote.json"
                  DESTINATION "${EMOTE_EXTERNAL_PATH}/360_360")
