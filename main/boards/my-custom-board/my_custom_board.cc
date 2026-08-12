@@ -11,6 +11,8 @@
 
 #include <esp_log.h>
 #include <esp_lcd_panel_vendor.h>
+#include <esp_lcd_panel_interface.h>
+#include <esp_heap_caps.h>
 #include <driver/i2c_master.h>
 #include <driver/spi_master.h>
 #include "esp_io_expander_tca9554.h"
@@ -24,6 +26,58 @@
 #define LCD_OPCODE_WRITE_CMD (0x02ULL)
 #define LCD_OPCODE_READ_CMD (0x03ULL)
 #define LCD_OPCODE_WRITE_COLOR (0x32ULL)
+
+// 软件旋转分块大小 (Tile size for cache efficiency during software rotation)
+#define SW_ROT_TILE (64)
+
+// 270度软件旋转 Hook 钩子函数相关变量
+static esp_err_t (*s_orig_draw_bitmap)(esp_lcd_panel_t *panel, int x_start, int y_start, int x_end, int y_end, const void *color_data) = NULL;
+static uint16_t *s_rot_buf = NULL;
+static size_t s_rot_buf_size = 0;
+
+/* ── 270度软件旋转 Hook 钩子函数 (CO5300 缺乏 MADCTL MV 位) ───── */
+static esp_err_t co5300_sw_rotate_270_draw_bitmap(esp_lcd_panel_t *panel, int x_start, int y_start, int x_end, int y_end, const void *color_data)
+{
+    if (!s_orig_draw_bitmap) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    int w = x_end - x_start;
+    int h = y_end - y_start;
+    size_t needed_bytes = (size_t)w * h * sizeof(uint16_t);
+
+    if (needed_bytes > s_rot_buf_size) {
+        ESP_LOGE(TAG, "Rotation buffer too small: need %zu, have %zu", needed_bytes, s_rot_buf_size);
+        return ESP_ERR_NO_MEM;
+    }
+
+    const uint16_t * __restrict__ src = (const uint16_t *)color_data;
+    uint16_t * __restrict__ dst = s_rot_buf;
+
+    // 270 度旋转物理坐标映射
+    int x_start_phy = y_start;
+    int x_end_phy   = y_end;
+    int y_start_phy = DISPLAY_HEIGHT - x_end;
+    int y_end_phy   = DISPLAY_HEIGHT - x_start;
+
+    // 分块转置, 提升 Cache 命中率 (完全对齐 lcd_init_qspi_co5300.c)
+    for (int by = 0; by < h; by += SW_ROT_TILE) {
+        int y_max = (by + SW_ROT_TILE < h) ? (by + SW_ROT_TILE) : h;
+        for (int bx = 0; bx < w; bx += SW_ROT_TILE) {
+            int x_max = (bx + SW_ROT_TILE < w) ? (bx + SW_ROT_TILE) : w;
+
+            for (int y = by; y < y_max; y++) {
+                const uint16_t *src_row = src + (size_t)y * w;
+                uint16_t *dst_row_base = dst + y;
+                for (int x = bx; x < x_max; x++) {
+                    dst_row_base[(size_t)(w - 1 - x) * h] = src_row[x];
+                }
+            }
+        }
+    }
+
+    return s_orig_draw_bitmap(panel, x_start_phy, y_start_phy, x_end_phy, y_end_phy, dst);
+}
 
 // PY206W38B_V2_206_410x502 屏幕初始化序列（完全对齐 lcd_init_qspi_co5300.c）
 static const co5300_lcd_init_cmd_t vendor_specific_init[] = {
@@ -225,7 +279,6 @@ private:
         ESP_ERROR_CHECK(esp_lcd_panel_set_gap(panel, DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y));
         ESP_ERROR_CHECK(esp_lcd_panel_swap_xy(panel, false));
         ESP_ERROR_CHECK(esp_lcd_panel_mirror(panel, false, false));
-        esp_lcd_panel_disp_on_off(panel, true);
 
         // ---------------- 纯硬件直刷红屏 & 100% 亮度测试 ----------------
         ESP_LOGI(TAG, "Testing pure hardware draw (RED SCREEN & 100%% Brightness)...");
@@ -236,8 +289,33 @@ private:
         }
         // ----------------------------------------------------------------
 
+        // 预分配 270 度软件旋转缓冲区 (完全对齐 lcd_init_qspi_co5300.c)
+        size_t max_bytes = (size_t)DISPLAY_WIDTH * DISPLAY_HEIGHT * sizeof(uint16_t);
+        if (!s_rot_buf) {
+            s_rot_buf = (uint16_t *)heap_caps_malloc(max_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (!s_rot_buf) {
+                s_rot_buf = (uint16_t *)malloc(max_bytes);
+            }
+            if (s_rot_buf) {
+                s_rot_buf_size = max_bytes;
+                ESP_LOGI(TAG, "Software rotation buffer pre-allocated: %zu bytes", max_bytes);
+            } else {
+                ESP_LOGE(TAG, "Failed to pre-allocate software rotation buffer (%zu bytes)", max_bytes);
+            }
+        }
+
+        // 安装 270 度软件旋转 Hook 钩子函数 (CO5300 MADCTL 缺乏 MV 位)
+        if (panel->draw_bitmap != co5300_sw_rotate_270_draw_bitmap) {
+            s_orig_draw_bitmap = panel->draw_bitmap;
+            panel->draw_bitmap = co5300_sw_rotate_270_draw_bitmap;
+            ESP_LOGI(TAG, "Installed 270 degree software rotation hook for CO5300");
+        }
+
+        esp_lcd_panel_disp_on_off(panel, true);
+
+        // 旋转 270 度后，逻辑分辨率变为 DISPLAY_HEIGHT x DISPLAY_WIDTH (502 x 410)
         display_ = new CustomLcdDisplay(panel_io, panel,
-                                        DISPLAY_WIDTH, DISPLAY_HEIGHT,
+                                        DISPLAY_HEIGHT, DISPLAY_WIDTH,
                                         0, 0, // Hardware gap already set, logical offset should be 0
                                         DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y, false);
         backlight_ = new CustomBacklight(panel);
@@ -246,8 +324,8 @@ private:
     void InitializeTouch() {
         esp_lcd_touch_handle_t tp;
         esp_lcd_touch_config_t tp_cfg = {
-            .x_max = DISPLAY_WIDTH - 1,
-            .y_max = DISPLAY_HEIGHT - 1,
+            .x_max = DISPLAY_HEIGHT - 1, // 270度旋转后的逻辑 Max X
+            .y_max = DISPLAY_WIDTH - 1,  // 270度旋转后的逻辑 Max Y
             .rst_gpio_num = PIN_NUM_TOUCH_RST,
             .int_gpio_num = PIN_NUM_TOUCH_INT,
             .levels = {
@@ -255,9 +333,9 @@ private:
                 .interrupt = 0,
             },
             .flags = {
-                .swap_xy = 0,
-                .mirror_x = 0,
-                .mirror_y = 0,
+                .swap_xy = 1,   // 270度旋转：交换 XY
+                .mirror_x = 0,  // 270度旋转：mirror_x = 0
+                .mirror_y = 1,  // 270度旋转：mirror_y = 1 (参考 touch_rotation_helper)
             },
         };
         esp_lcd_panel_io_handle_t tp_io_handle = NULL;
