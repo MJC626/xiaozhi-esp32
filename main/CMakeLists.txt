@@ -834,6 +834,9 @@ elseif(CONFIG_BOARD_TYPE_MY_CUSTOM_BOARD)
     set(BUILTIN_TEXT_FONT font_noto_sans_basic_30_4)
     set(BUILTIN_ICON_FONT font_material_symbols_30_4)
     set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_128)
+    set(EMOTE_RESOLUTION "360_360")
+    set(MY_CUSTOM_BOARD_ASSETS_STAGING "${CMAKE_BINARY_DIR}/my-custom-board-assets")
+    set(EMOTE_EXTERNAL_PATH "${MY_CUSTOM_BOARD_ASSETS_STAGING}")
 endif()
 
 if(NOT BOARD_DIR AND NOT CMAKE_BUILD_EARLY_EXPANSION)
@@ -1137,31 +1140,27 @@ if(NOTO_FONTS_COMPONENT_PATH)
     set(NOTO_FONTS_PATH "${NOTO_FONTS_COMPONENT_PATH}")
 endif()
 
-if(CONFIG_BOARD_TYPE_ESP_VOCAT)
+if(CONFIG_BOARD_TYPE_ESP_VOCAT OR CONFIG_BOARD_TYPE_MY_CUSTOM_BOARD)
     find_component_by_pattern("esp_emote_assets" EMOTE_ASSETS_COMPONENT EMOTE_ASSETS_PATH)
     if(EMOTE_ASSETS_PATH)
-        file(REMOVE_RECURSE "${ESP_VOCAT_ASSETS_STAGING}")
+        file(REMOVE_RECURSE "${EMOTE_EXTERNAL_PATH}")
         file(REMOVE
             "${CMAKE_BINARY_DIR}/expression_assets.bin"
             "${CMAKE_BINARY_DIR}/expression_assets.bin.validated"
         )
-        file(MAKE_DIRECTORY "${ESP_VOCAT_ASSETS_STAGING}/360_360")
-        file(MAKE_DIRECTORY "${ESP_VOCAT_ASSETS_STAGING}/emoji_large")
-        file(COPY "${EMOTE_ASSETS_PATH}/emoji_large/" DESTINATION "${ESP_VOCAT_ASSETS_STAGING}/emoji_large")
-        file(COPY "${EMOTE_ASSETS_PATH}/360_360/layout.json" DESTINATION "${ESP_VOCAT_ASSETS_STAGING}/360_360")
-        file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/boards/espressif/esp-vocat/assets/360_360/emote.json"
-             DESTINATION "${ESP_VOCAT_ASSETS_STAGING}/360_360")
-        file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/boards/espressif/esp-vocat/emoji/low_battery.eaf"
-             DESTINATION "${ESP_VOCAT_ASSETS_STAGING}/emoji_large")
-        file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/boards/espressif/esp-vocat/emoji/battery_connected.eaf"
-             DESTINATION "${ESP_VOCAT_ASSETS_STAGING}/emoji_large")
-        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-            "${CMAKE_CURRENT_SOURCE_DIR}/boards/espressif/esp-vocat/assets/360_360/emote.json"
-            "${CMAKE_CURRENT_SOURCE_DIR}/boards/espressif/esp-vocat/emoji/low_battery.eaf"
-            "${CMAKE_CURRENT_SOURCE_DIR}/boards/espressif/esp-vocat/emoji/battery_connected.eaf"
-        )
+        file(MAKE_DIRECTORY "${EMOTE_EXTERNAL_PATH}/360_360")
+        file(MAKE_DIRECTORY "${EMOTE_EXTERNAL_PATH}/emoji_large")
+        file(COPY "${EMOTE_ASSETS_PATH}/emoji_large/" DESTINATION "${EMOTE_EXTERNAL_PATH}/emoji_large")
+        file(COPY "${EMOTE_ASSETS_PATH}/360_360/layout.json" DESTINATION "${EMOTE_EXTERNAL_PATH}/360_360")
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/assets/360_360/emote.json")
+            file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/assets/360_360/emote.json"
+                 DESTINATION "${EMOTE_EXTERNAL_PATH}/360_360")
+        else()
+            file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/boards/espressif/esp-vocat/assets/360_360/emote.json"
+                 DESTINATION "${EMOTE_EXTERNAL_PATH}/360_360")
+        endif()
     else()
-        message(WARNING "esp_emote_assets component not found; ESP-VoCat custom emotes will be skipped")
+        message(WARNING "esp_emote_assets component not found; Emote custom assets will be skipped")
     endif()
 endif()
 
@@ -1343,6 +1342,10 @@ if ("${size}" AND "${offset}")
         set(ASSETS_NAME "expression_assets")
         set(ASSETS_PARTITION "assets")
         set(ASSETS_FILE "${CMAKE_BINARY_DIR}/${ASSETS_NAME}.bin")
+
+        if(NOT CONFIG_MMAP_FILE_NAME_LENGTH)
+            set(CONFIG_MMAP_FILE_NAME_LENGTH 32)
+        endif()
 
         if(EMOTE_EXTERNAL_PATH)
             build_speaker_assets_bin("${ASSETS_PARTITION}" ${EMOTE_RESOLUTION} ${ASSETS_FILE} ${CONFIG_MMAP_FILE_NAME_LENGTH} "${EMOTE_EXTERNAL_PATH}")
