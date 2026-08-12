@@ -1,4 +1,5 @@
 #include "wifi_board.h"
+#include "display/emote_display.h"
 #include "display/lcd_display.h"
 #include "esp_lcd_co5300.h"
 
@@ -173,7 +174,7 @@ class MyCustomBoard : public WifiBoard {
 private:
     i2c_master_bus_handle_t i2c_bus_;
     Button boot_button_;
-    CustomLcdDisplay* display_;
+    Display* display_;
     CustomBacklight* backlight_;
     esp_io_expander_handle_t io_expander = NULL;
 
@@ -314,10 +315,14 @@ private:
         esp_lcd_panel_disp_on_off(panel, true);
 
         // 旋转 270 度后，逻辑分辨率变为 DISPLAY_HEIGHT x DISPLAY_WIDTH (502 x 410)
+#if CONFIG_USE_EMOTE_MESSAGE_STYLE
+        display_ = new emote::EmoteDisplay(panel, panel_io, DISPLAY_HEIGHT, DISPLAY_WIDTH);
+#else
         display_ = new CustomLcdDisplay(panel_io, panel,
                                         DISPLAY_HEIGHT, DISPLAY_WIDTH,
                                         0, 0, // Hardware gap already set, logical offset should be 0
                                         DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y, false);
+#endif
         backlight_ = new CustomBacklight(panel);
     }
 
@@ -354,8 +359,12 @@ private:
             .disp = lv_display_get_default(),
             .handle = tp,
         };
-        lvgl_port_add_touch(&touch_cfg);
-        ESP_LOGI(TAG, "Touch panel initialized successfully (polling mode)");
+        if (touch_cfg.disp != nullptr) {
+            lvgl_port_add_touch(&touch_cfg);
+            ESP_LOGI(TAG, "Touch panel initialized successfully (polling mode)");
+        } else {
+            ESP_LOGI(TAG, "Touch panel initialized, skipping LVGL port binding (LVGL display is NULL under Emote style)");
+        }
     }
 
     void InitializeButtons() {
