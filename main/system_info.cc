@@ -9,6 +9,7 @@
 #include <esp_app_desc.h>
 #include <esp_ota_ops.h>
 #include <esp_pm.h>
+#include <esp_heap_caps.h>
 #if CONFIG_IDF_TARGET_ESP32P4 && !CONFIG_XIAOZHI_NETWORK_ETHERNET
 #include "esp_wifi_remote.h"
 #endif
@@ -150,7 +151,9 @@ void SystemInfo::PrintTaskList() {
 void SystemInfo::PrintHeapStats() {
     int free_sram = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     int min_free_sram = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
-    ESP_LOGI(TAG, "free sram: %u minimal sram: %u", free_sram, min_free_sram);
+    int free_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    int min_free_psram = heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM);
+    ESP_LOGI(TAG, "free sram: %u minimal sram: %u, free psram: %u minimal psram: %u", free_sram, min_free_sram, free_psram, min_free_psram);
 }
 
 void SystemInfo::PrintPmLocks() {
