@@ -11,6 +11,8 @@
 #include "i2c_device.h"
 #include "esp32_camera.h"
 
+#include <vector>
+#include <string>
 #include <esp_log.h>
 #include <esp_lcd_panel_vendor.h>
 #include <esp_lcd_panel_interface.h>
@@ -182,6 +184,83 @@ private:
     CustomBacklight* backlight_;
     Esp32Camera* camera_ = nullptr;
     esp_io_expander_handle_t io_expander = NULL;
+    esp_lcd_touch_handle_t touch_handle_ = nullptr;
+    TaskHandle_t touch_task_handle_ = nullptr;
+    size_t current_emotion_index_ = 0;
+
+    static void TouchGestureTask(void* arg) {
+        auto board = static_cast<MyCustomBoard*>(arg);
+        uint16_t x[1], y[1];
+        uint8_t count = 0;
+
+        bool is_touching = false;
+        uint16_t start_x = 0, start_y = 0;
+        uint16_t last_x = 0, last_y = 0;
+        int64_t start_time = 0;
+
+        const std::vector<std::string> emotions = {
+            "neutral", "happy", "laughing", "funny", "sad", "angry", "crying",
+            "loving", "embarrassed", "surprised", "shocked", "thinking", "winking",
+            "cool", "relaxed", "delicious", "kissy", "confident", "sleepy",
+            "silly", "confused"
+        };
+
+        while (true) {
+            if (board->touch_handle_) {
+                esp_lcd_touch_read_data(board->touch_handle_);
+                bool touched = esp_lcd_touch_get_coordinates(board->touch_handle_, x, y, NULL, &count, 1);
+                int64_t now = esp_timer_get_time() / 1000; // ms
+
+                if (touched && count > 0) {
+                    if (!is_touching) {
+                        is_touching = true;
+                        start_x = x[0];
+                        start_y = y[0];
+                        start_time = now;
+                    }
+                    last_x = x[0];
+                    last_y = y[0];
+                } else if (is_touching) {
+                    is_touching = false;
+                    int dx = (int)last_x - (int)start_x;
+                    int dy = (int)last_y - (int)start_y;
+                    int dt = (int)(now - start_time);
+
+                    std::string target_emotion = "";
+
+                    if (abs(dx) < 30 && abs(dy) < 30 && dt < 500) {
+                        // 单击 Tap：循环切换表情
+                        board->current_emotion_index_ = (board->current_emotion_index_ + 1) % emotions.size();
+                        target_emotion = emotions[board->current_emotion_index_];
+                        ESP_LOGI(TAG, "Touch Gesture: Tap -> %s", target_emotion.c_str());
+                    } else if (dx > 60 && abs(dy) < 50) {
+                        // 向右滑动 Swipe Right
+                        board->current_emotion_index_ = (board->current_emotion_index_ + 1) % emotions.size();
+                        target_emotion = emotions[board->current_emotion_index_];
+                        ESP_LOGI(TAG, "Touch Gesture: Swipe Right -> %s", target_emotion.c_str());
+                    } else if (dx < -60 && abs(dy) < 50) {
+                        // 向左滑动 Swipe Left
+                        if (board->current_emotion_index_ == 0) {
+                            board->current_emotion_index_ = emotions.size() - 1;
+                        } else {
+                            board->current_emotion_index_--;
+                        }
+                        target_emotion = emotions[board->current_emotion_index_];
+                        ESP_LOGI(TAG, "Touch Gesture: Swipe Left -> %s", target_emotion.c_str());
+                    }
+
+                    if (!target_emotion.empty()) {
+                        Application::GetInstance().Schedule([board, target_emotion]() {
+                            if (board->GetDisplay()) {
+                                board->GetDisplay()->SetEmotion(target_emotion.c_str());
+                            }
+                        });
+                    }
+                }
+            }
+            vTaskDelay(pdMS_TO_TICKS(30));
+        }
+    }
 
     void InitializeI2c() {
         i2c_master_bus_config_t i2c_bus_cfg = {
@@ -359,6 +438,7 @@ private:
         // when no touch event is active. Wrap read_data to return ESP_OK with 0 points.
         cst9217_read_data_orig = tp->read_data;
         tp->read_data = cst9217_read_data_polling_wrapper;
+        touch_handle_ = tp;
 
         const lvgl_port_touch_cfg_t touch_cfg = {
             .disp = lv_display_get_default(),
@@ -369,6 +449,7 @@ private:
             ESP_LOGI(TAG, "Touch panel initialized successfully (polling mode)");
         } else {
             ESP_LOGI(TAG, "Touch panel initialized, skipping LVGL port binding (LVGL display is NULL under Emote style)");
+            xTaskCreate(TouchGestureTask, "touch_gesture", 3072, this, 3, &touch_task_handle_);
         }
     }
 
