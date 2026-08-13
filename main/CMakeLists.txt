@@ -459,6 +459,10 @@ elseif(CONFIG_BOARD_TYPE_WAVESHARE_ESP32_C5_TOUCH_LCD_1_69)
     set(BUILTIN_TEXT_FONT font_noto_sans_basic_20_4)
     set(BUILTIN_ICON_FONT font_material_symbols_20_4)
     set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_64)
+elseif(CONFIG_BOARD_TYPE_WAVESHARE_ESP32_C6_EPAPER_1_54)
+    set(BOARD_DIR "waveshare/esp32-c6-epaper-1.54")
+    set(BUILTIN_TEXT_FONT font_noto_sans_basic_20_4)
+    set(BUILTIN_ICON_FONT font_material_symbols_20_4)
 elseif(CONFIG_BOARD_TYPE_WAVESHARE_ESP32_C6_LCD_1_69)
     set(BOARD_DIR "waveshare/esp32-c6-lcd-1.69")
     set(BUILTIN_TEXT_FONT font_noto_sans_basic_20_4)
@@ -824,6 +828,11 @@ elseif(CONFIG_BOARD_TYPE_AI_VOX3)
     set(BUILTIN_TEXT_FONT font_noto_sans_basic_20_4)
     set(BUILTIN_ICON_FONT font_material_symbols_20_4)
     set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_64)
+elseif(CONFIG_BOARD_TYPE_WK_ESP32S3_DEV)
+    set(BOARD_DIR "wk-esp32s3-dev")
+    set(BUILTIN_TEXT_FONT font_noto_sans_basic_20_4)
+    set(BUILTIN_ICON_FONT font_material_symbols_20_4)
+    set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_64)
 elseif(CONFIG_BOARD_TYPE_LCDWIKI_ES3C35P)
     set(BOARD_DIR "lcdwiki-es3c35p")
     set(BUILTIN_TEXT_FONT font_noto_sans_basic_20_4)
@@ -1143,39 +1152,28 @@ endif()
 if(CONFIG_BOARD_TYPE_ESP_VOCAT OR CONFIG_BOARD_TYPE_MY_CUSTOM_BOARD)
     find_component_by_pattern("esp_emote_assets" EMOTE_ASSETS_COMPONENT EMOTE_ASSETS_PATH)
     if(EMOTE_ASSETS_PATH)
-        file(REMOVE_RECURSE "${EMOTE_EXTERNAL_PATH}")
+        file(REMOVE_RECURSE "${ESP_VOCAT_ASSETS_STAGING}")
         file(REMOVE
             "${CMAKE_BINARY_DIR}/expression_assets.bin"
             "${CMAKE_BINARY_DIR}/expression_assets.bin.validated"
         )
-        file(MAKE_DIRECTORY "${EMOTE_EXTERNAL_PATH}/360_360")
-        file(MAKE_DIRECTORY "${EMOTE_EXTERNAL_PATH}/emoji_large")
-        file(COPY "${EMOTE_ASSETS_PATH}/emoji_large/" DESTINATION "${EMOTE_EXTERNAL_PATH}/emoji_large")
-        file(GLOB EMOTE_BIN_FILES "${EMOTE_ASSETS_PATH}/emoji_large/*.bin")
-        if(EMOTE_BIN_FILES)
-            file(COPY ${EMOTE_BIN_FILES} DESTINATION "${EMOTE_EXTERNAL_PATH}/360_360")
-        endif()
-        file(COPY "${EMOTE_ASSETS_PATH}/360_360/layout.json" DESTINATION "${EMOTE_EXTERNAL_PATH}/360_360")
+        file(MAKE_DIRECTORY "${ESP_VOCAT_ASSETS_STAGING}/360_360")
+        file(MAKE_DIRECTORY "${ESP_VOCAT_ASSETS_STAGING}/emoji_large")
+        file(COPY "${EMOTE_ASSETS_PATH}/emoji_large/" DESTINATION "${ESP_VOCAT_ASSETS_STAGING}/emoji_large")
+        file(COPY "${EMOTE_ASSETS_PATH}/360_360/layout.json" DESTINATION "${ESP_VOCAT_ASSETS_STAGING}/360_360")
+        file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/boards/espressif/esp-vocat/assets/360_360/emote.json"
+             DESTINATION "${ESP_VOCAT_ASSETS_STAGING}/360_360")
         file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/boards/espressif/esp-vocat/emoji/low_battery.eaf"
-             DESTINATION "${EMOTE_EXTERNAL_PATH}/emoji_large")
+             DESTINATION "${ESP_VOCAT_ASSETS_STAGING}/emoji_large")
         file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/boards/espressif/esp-vocat/emoji/battery_connected.eaf"
-             DESTINATION "${EMOTE_EXTERNAL_PATH}/emoji_large")
-        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/assets/360_360/config.json")
-            file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/assets/360_360/config.json"
-                 DESTINATION "${EMOTE_EXTERNAL_PATH}/360_360")
-        else()
-            file(COPY "${EMOTE_ASSETS_PATH}/360_360/config.json"
-                 DESTINATION "${EMOTE_EXTERNAL_PATH}/360_360")
-        endif()
-        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/assets/360_360/emote.json")
-            file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/assets/360_360/emote.json"
-                 DESTINATION "${EMOTE_EXTERNAL_PATH}/360_360")
-        else()
-            file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/boards/espressif/esp-vocat/assets/360_360/emote.json"
-                 DESTINATION "${EMOTE_EXTERNAL_PATH}/360_360")
-        endif()
+             DESTINATION "${ESP_VOCAT_ASSETS_STAGING}/emoji_large")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/boards/espressif/esp-vocat/assets/360_360/emote.json"
+            "${CMAKE_CURRENT_SOURCE_DIR}/boards/espressif/esp-vocat/emoji/low_battery.eaf"
+            "${CMAKE_CURRENT_SOURCE_DIR}/boards/espressif/esp-vocat/emoji/battery_connected.eaf"
+        )
     else()
-        message(WARNING "esp_emote_assets component not found; Emote custom assets will be skipped")
+        message(WARNING "esp_emote_assets component not found; ESP-VoCat custom emotes will be skipped")
     endif()
 endif()
 
@@ -1357,10 +1355,6 @@ if ("${size}" AND "${offset}")
         set(ASSETS_NAME "expression_assets")
         set(ASSETS_PARTITION "assets")
         set(ASSETS_FILE "${CMAKE_BINARY_DIR}/${ASSETS_NAME}.bin")
-
-        if(NOT CONFIG_MMAP_FILE_NAME_LENGTH)
-            set(CONFIG_MMAP_FILE_NAME_LENGTH 32)
-        endif()
 
         if(EMOTE_EXTERNAL_PATH)
             build_speaker_assets_bin("${ASSETS_PARTITION}" ${EMOTE_RESOLUTION} ${ASSETS_FILE} ${CONFIG_MMAP_FILE_NAME_LENGTH} "${EMOTE_EXTERNAL_PATH}")
