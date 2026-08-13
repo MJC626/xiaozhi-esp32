@@ -233,20 +233,16 @@ private:
                         board->current_emotion_index_ = (board->current_emotion_index_ + 1) % emotions.size();
                         target_emotion = emotions[board->current_emotion_index_];
                         ESP_LOGI(TAG, "Touch Gesture: Tap -> %s", target_emotion.c_str());
-                    } else if (dx > 60 && abs(dy) < 50) {
-                        // 向右滑动 Swipe Right
-                        board->current_emotion_index_ = (board->current_emotion_index_ + 1) % emotions.size();
-                        target_emotion = emotions[board->current_emotion_index_];
-                        ESP_LOGI(TAG, "Touch Gesture: Swipe Right -> %s", target_emotion.c_str());
-                    } else if (dx < -60 && abs(dy) < 50) {
-                        // 向左滑动 Swipe Left
-                        if (board->current_emotion_index_ == 0) {
-                            board->current_emotion_index_ = emotions.size() - 1;
-                        } else {
-                            board->current_emotion_index_--;
-                        }
-                        target_emotion = emotions[board->current_emotion_index_];
-                        ESP_LOGI(TAG, "Touch Gesture: Swipe Left -> %s", target_emotion.c_str());
+                    } else if (dy > 50 && abs(dx) < 50) {
+                        // 下滑 Swipe Down：强制安全切换状态为 Idle
+                        ESP_LOGI(TAG, "Touch Gesture: Swipe Down -> Force transition to Idle");
+                        Application::GetInstance().Schedule([]() {
+                            auto& app = Application::GetInstance();
+                            if (app.GetDeviceState() == kDeviceStateSpeaking) {
+                                app.AbortSpeaking(kAbortReasonNone);
+                            }
+                            app.SetDeviceState(kDeviceStateIdle);
+                        });
                     }
 
                     if (!target_emotion.empty()) {
