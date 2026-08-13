@@ -30,6 +30,9 @@
 // Buttons
 #define BOOT_BUTTON_GPIO        GPIO_NUM_0
 
+// Battery ADC Pin (GPIO8 -> ADC1 Channel 7)
+#define BATTERY_ADC_GPIO        GPIO_NUM_8
+
 // IO Expander (TCA9554)
 #define I2C_ADDRESS             ESP_IO_EXPANDER_I2C_TCA9554_ADDRESS_000
 

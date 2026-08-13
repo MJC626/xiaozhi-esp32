@@ -21,6 +21,9 @@
 #include <esp_lcd_touch_cst9217.h>
 #include <esp_lvgl_port.h>
 #include <lvgl.h>
+#include <esp_adc/adc_oneshot.h>
+#include <esp_adc/adc_cali.h>
+#include <esp_adc/adc_cali_scheme.h>
 
 #define TAG "MyCustomBoard"
 
@@ -389,6 +392,72 @@ private:
             });
     }
 
+    adc_oneshot_unit_handle_t adc_handle_ = nullptr;
+    adc_cali_handle_t adc_cali_handle_ = nullptr;
+    bool adc_cali_enabled_ = false;
+
+    void InitializeAdc() {
+        if (adc_handle_ != nullptr) {
+            return;
+        }
+
+        adc_oneshot_unit_init_cfg_t init_config = {
+            .unit_id = ADC_UNIT_1,
+        };
+        if (adc_oneshot_new_unit(&init_config, &adc_handle_) != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to initialize ADC1 unit");
+            return;
+        }
+
+        adc_oneshot_chan_cfg_t chan_config = {
+            .atten = ADC_ATTEN_DB_12,
+            .bitwidth = ADC_BITWIDTH_DEFAULT,
+        };
+        if (adc_oneshot_config_channel(adc_handle_, ADC_CHANNEL_7, &chan_config) != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to config ADC1 channel 7 (GPIO8)");
+            return;
+        }
+
+        adc_cali_curve_fitting_config_t cali_config = {
+            .unit_id = ADC_UNIT_1,
+            .chan = ADC_CHANNEL_7,
+            .atten = ADC_ATTEN_DB_12,
+            .bitwidth = ADC_BITWIDTH_DEFAULT,
+        };
+        if (adc_cali_create_scheme_curve_fitting(&cali_config, &adc_cali_handle_) == ESP_OK) {
+            adc_cali_enabled_ = true;
+            ESP_LOGI(TAG, "ADC calibration curve fitting enabled for battery measurement");
+        } else {
+            ESP_LOGW(TAG, "ADC calibration curve fitting unavailable, using raw conversion");
+        }
+    }
+
+    uint16_t ReadBatteryVoltageMv() {
+        InitializeAdc();
+        if (!adc_handle_) {
+            return 0;
+        }
+
+        int sum_raw = 0;
+        const int samples = 8;
+        for (int i = 0; i < samples; i++) {
+            int raw_val = 0;
+            adc_oneshot_read(adc_handle_, ADC_CHANNEL_7, &raw_val);
+            sum_raw += raw_val;
+        }
+        int avg_raw = sum_raw / samples;
+
+        int voltage_mv = 0;
+        if (adc_cali_enabled_) {
+            adc_cali_raw_to_voltage(adc_cali_handle_, avg_raw, &voltage_mv);
+        } else {
+            voltage_mv = (avg_raw * 3300) / 4095;
+        }
+
+        // 两个 100K 1:1 分压电阻：真实电池电压 = ADC 测量电压 * 2
+        return (uint16_t)(voltage_mv * 2);
+    }
+
 public:
     MyCustomBoard() : boot_button_(BOOT_BUTTON_GPIO) {
         InitializeI2c();
@@ -424,6 +493,26 @@ public:
 
     virtual Backlight* GetBacklight() override {
         return backlight_;
+    }
+
+    virtual bool GetBatteryLevel(int &level, bool &charging, bool &discharging) override {
+        uint16_t voltage_mv = ReadBatteryVoltageMv();
+        if (voltage_mv == 0) {
+            return false;
+        }
+
+        // 锂电池电压映射 3.3V (0%) ~ 4.2V (100%)
+        if (voltage_mv >= 4200) {
+            level = 100;
+        } else if (voltage_mv <= 3300) {
+            level = 0;
+        } else {
+            level = (voltage_mv - 3300) * 100 / (4200 - 3300);
+        }
+
+        charging = false;
+        discharging = true;
+        return true;
     }
 };
 
