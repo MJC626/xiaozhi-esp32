@@ -392,9 +392,12 @@ elseif(CONFIG_BOARD_TYPE_WAVESHARE_ESP32_S3_RGB_MATRIX)
     set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_32)
 elseif(CONFIG_BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_LCD_1_85C)
     set(BOARD_DIR "waveshare/esp32-s3-touch-lcd-1.85c")
-    set(BUILTIN_TEXT_FONT font_noto_sans_basic_16_4)
-    set(BUILTIN_ICON_FONT font_material_symbols_16_4)
+    set(BUILTIN_TEXT_FONT font_noto_sans_basic_20_4)
+    set(BUILTIN_ICON_FONT font_material_symbols_20_4)
     set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_64)
+    set(EMOTE_RESOLUTION "360_360")
+    set(WAVESHARE_ESP32_S3_TOUCH_LCD_1_85C_ASSETS_STAGING "${CMAKE_BINARY_DIR}/waveshare-esp32-s3-touch-lcd-1.85c-assets")
+    set(EMOTE_EXTERNAL_PATH "${WAVESHARE_ESP32_S3_TOUCH_LCD_1_85C_ASSETS_STAGING}")
 elseif(CONFIG_BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_LCD_1_85B)
     set(BOARD_DIR "waveshare/esp32-s3-touch-lcd-1.85b")
     set(BUILTIN_TEXT_FONT font_noto_sans_basic_16_4)
@@ -1149,7 +1152,7 @@ if(NOTO_FONTS_COMPONENT_PATH)
     set(NOTO_FONTS_PATH "${NOTO_FONTS_COMPONENT_PATH}")
 endif()
 
-if(CONFIG_BOARD_TYPE_ESP_VOCAT OR CONFIG_BOARD_TYPE_MY_CUSTOM_BOARD)
+if(CONFIG_BOARD_TYPE_ESP_VOCAT OR CONFIG_BOARD_TYPE_MY_CUSTOM_BOARD OR CONFIG_BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_LCD_1_85C)
     find_component_by_pattern("esp_emote_assets" EMOTE_ASSETS_COMPONENT EMOTE_ASSETS_PATH)
     if(EMOTE_ASSETS_PATH)
         file(REMOVE_RECURSE "${EMOTE_EXTERNAL_PATH}")
@@ -1161,17 +1164,28 @@ if(CONFIG_BOARD_TYPE_ESP_VOCAT OR CONFIG_BOARD_TYPE_MY_CUSTOM_BOARD)
         file(MAKE_DIRECTORY "${EMOTE_EXTERNAL_PATH}/emoji_large")
         file(COPY "${EMOTE_ASSETS_PATH}/emoji_large/" DESTINATION "${EMOTE_EXTERNAL_PATH}/emoji_large")
         file(COPY "${EMOTE_ASSETS_PATH}/360_360/layout.json" DESTINATION "${EMOTE_EXTERNAL_PATH}/360_360")
-        file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/assets/360_360/emote.json"
-             DESTINATION "${EMOTE_EXTERNAL_PATH}/360_360")
-        file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/emoji/low_battery.eaf"
-             DESTINATION "${EMOTE_EXTERNAL_PATH}/emoji_large")
-        file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/emoji/battery_connected.eaf"
-             DESTINATION "${EMOTE_EXTERNAL_PATH}/emoji_large")
-        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-            "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/assets/360_360/emote.json"
-            "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/emoji/low_battery.eaf"
-            "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/emoji/battery_connected.eaf"
-        )
+        file(COPY "${EMOTE_ASSETS_PATH}/360_360/emote.json" DESTINATION "${EMOTE_EXTERNAL_PATH}/360_360")
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/assets/360_360/emote.json")
+            file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/assets/360_360/emote.json"
+                 DESTINATION "${EMOTE_EXTERNAL_PATH}/360_360")
+            set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/assets/360_360/emote.json"
+            )
+        endif()
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/emoji/low_battery.eaf")
+            file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/emoji/low_battery.eaf"
+                 DESTINATION "${EMOTE_EXTERNAL_PATH}/emoji_large")
+            set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/emoji/low_battery.eaf"
+            )
+        endif()
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/emoji/battery_connected.eaf")
+            file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/emoji/battery_connected.eaf"
+                 DESTINATION "${EMOTE_EXTERNAL_PATH}/emoji_large")
+            set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/emoji/battery_connected.eaf"
+            )
+        endif()
     else()
         message(WARNING "esp_emote_assets component not found; custom emotes will be skipped")
     endif()

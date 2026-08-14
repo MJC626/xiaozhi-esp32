@@ -5,7 +5,11 @@
     "builds": [
         {
             "name": "esp32-s3-touch-lcd-1.85c",
-            "sdkconfig_append": []
+            "sdkconfig_append": [
+                "CONFIG_USE_EMOTE_MESSAGE_STYLE=y",
+                "CONFIG_MMAP_FILE_NAME_LENGTH=32",
+                "CONFIG_FLASH_EXPRESSION_ASSETS=y"
+            ]
         }
     ]
 }

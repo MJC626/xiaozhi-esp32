@@ -2,11 +2,14 @@
 #include "codecs/no_audio_codec.h"
 #include "codecs/box_audio_codec.h"
 #include "display/lcd_display.h"
+#include "display/emote_display.h"
 #include "system_reset.h"
 #include "application.h"
 #include "button.h"
 #include "config.h"
 
+#include <vector>
+#include <string>
 #include <esp_log.h>
 #include "i2c_device.h"
 #include <driver/i2c_master.h>
@@ -14,6 +17,9 @@
 #include <esp_lcd_panel_io.h>
 #include <esp_lcd_panel_ops.h>
 #include <esp_lcd_st77916.h>
+#include <esp_lcd_touch_cst816s.h>
+#include <esp_lvgl_port.h>
+#include <lvgl.h>
 #include <esp_timer.h>
 #include "esp_io_expander_tca9554.h"
 
@@ -211,12 +217,119 @@ static const st77916_lcd_init_cmd_t vendor_specific_init_new[] = {
     {0x29, (uint8_t []){0x00}, 1, 0},  
 };
 
+static esp_err_t (*cst816s_read_data_orig)(esp_lcd_touch_handle_t tp) = NULL;
+
+static esp_err_t cst816s_read_data_polling_wrapper(esp_lcd_touch_handle_t tp) {
+    if (gpio_get_level(TP_PIN_NUM_INT) != 0) {
+        portENTER_CRITICAL(&tp->data.lock);
+        tp->data.points = 0;
+        portEXIT_CRITICAL(&tp->data.lock);
+        return ESP_OK;
+    }
+    return cst816s_read_data_orig(tp);
+}
+
 class CustomBoard : public WifiBoard {
 private:
     Button boot_button_;
     i2c_master_bus_handle_t i2c_bus_;
     esp_io_expander_handle_t io_expander = NULL;
-    LcdDisplay* display_;
+    Display* display_ = nullptr;
+    esp_lcd_touch_handle_t touch_handle_ = nullptr;
+    TaskHandle_t touch_task_handle_ = nullptr;
+    size_t current_emotion_index_ = 0;
+
+    void PlayTemporaryEmotion(const char* emotion, uint32_t duration_ms = 3500) {
+#if CONFIG_USE_EMOTE_MESSAGE_STYLE
+        if (display_ == nullptr || emotion == nullptr) {
+            return;
+        }
+        auto* emote_display = dynamic_cast<emote::EmoteDisplay*>(display_);
+        if (emote_display != nullptr) {
+            emote_display->InsertAnimDialog(emotion, duration_ms);
+            return;
+        }
+#endif
+        if (display_ != nullptr && emotion != nullptr) {
+            display_->SetEmotion(emotion);
+        }
+    }
+
+    static void TouchGestureTask(void* arg) {
+        auto board = static_cast<CustomBoard*>(arg);
+        uint16_t x[1], y[1];
+        uint8_t count = 0;
+
+        bool is_touching = false;
+        uint16_t start_x = 0, start_y = 0;
+        uint16_t last_x = 0, last_y = 0;
+        int64_t start_time = 0;
+
+        const std::vector<std::string> emotions = {
+            "neutral", "happy", "laughing", "funny", "sad", "angry", "crying",
+            "loving", "embarrassed", "surprised", "shocked", "thinking", "winking",
+            "cool", "relaxed", "delicious", "kissy", "confident", "sleepy",
+            "silly", "confused"
+        };
+
+        while (true) {
+            if (board->touch_handle_) {
+                // CST816S 仅在按下时拉低 INT 引脚并唤醒响应 I2C；未按下处于休眠状态直接读取会导致 I2C NACK 报错
+                bool int_active = (gpio_get_level(TP_PIN_NUM_INT) == 0);
+
+                if (int_active || is_touching) {
+                    esp_err_t err = esp_lcd_touch_read_data(board->touch_handle_);
+                    bool touched = false;
+                    if (err == ESP_OK) {
+                        touched = esp_lcd_touch_get_coordinates(board->touch_handle_, x, y, NULL, &count, 1);
+                    }
+                    int64_t now = esp_timer_get_time() / 1000; // ms
+
+                    if (touched && count > 0) {
+                        if (!is_touching) {
+                            is_touching = true;
+                            start_x = x[0];
+                            start_y = y[0];
+                            start_time = now;
+                        }
+                        last_x = x[0];
+                        last_y = y[0];
+                    } else if (is_touching) {
+                        is_touching = false;
+                        int dx = (int)last_x - (int)start_x;
+                        int dy = (int)last_y - (int)start_y;
+                        int dt = (int)(now - start_time);
+
+                        std::string target_emotion = "";
+
+                        if (abs(dx) < 30 && abs(dy) < 30 && dt < 500) {
+                            // 单击 Tap：播放下一个表情一次
+                            board->current_emotion_index_ = (board->current_emotion_index_ + 1) % emotions.size();
+                            target_emotion = emotions[board->current_emotion_index_];
+                            ESP_LOGI(TAG, "Touch Gesture: Tap -> %s", target_emotion.c_str());
+                        } else if (dy > 50 && abs(dx) < 50) {
+                            // 下滑 Swipe Down：强制安全切换状态为 Idle
+                            ESP_LOGI(TAG, "Touch Gesture: Swipe Down -> Force transition to Idle");
+                            Application::GetInstance().Schedule([]() {
+                                auto& app = Application::GetInstance();
+                                if (app.GetDeviceState() == kDeviceStateSpeaking) {
+                                    app.AbortSpeaking(kAbortReasonNone);
+                                }
+                                app.SetDeviceState(kDeviceStateIdle);
+                            });
+                        }
+
+                        if (!target_emotion.empty()) {
+                            Application::GetInstance().Schedule([board, target_emotion]() {
+                                board->PlayTemporaryEmotion(target_emotion.c_str(), 3500);
+                            });
+                        }
+                    }
+                }
+            }
+            vTaskDelay(pdMS_TO_TICKS(20));
+        }
+    }
 
     void InitializeI2c() {
         // Initialize I2C peripheral
@@ -350,8 +463,69 @@ private:
         esp_lcd_panel_swap_xy(panel, DISPLAY_SWAP_XY);
         esp_lcd_panel_mirror(panel, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y);
 
+#if CONFIG_USE_EMOTE_MESSAGE_STYLE
+        display_ = new emote::EmoteDisplay(panel, panel_io, DISPLAY_WIDTH, DISPLAY_HEIGHT);
+#else
         display_ = new SpiLcdDisplay(panel_io, panel,
                                     DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
+#endif
+    }
+
+    void InitializeTouch() {
+        esp_lcd_touch_handle_t tp;
+        esp_lcd_touch_config_t tp_cfg = {
+            .x_max = DISPLAY_WIDTH - 1,
+            .y_max = DISPLAY_HEIGHT - 1,
+            .rst_gpio_num = TP_PIN_NUM_RST,
+            .int_gpio_num = TP_PIN_NUM_INT,
+            .levels = {
+                .reset = 0,
+                .interrupt = 0,
+            },
+            .flags = {
+                .swap_xy = 0,
+                .mirror_x = 0,
+                .mirror_y = 0,
+            },
+        };
+        esp_lcd_panel_io_handle_t tp_io_handle = NULL;
+        esp_lcd_panel_io_i2c_config_t tp_io_config = {};
+        tp_io_config.dev_addr = ESP_LCD_TOUCH_IO_I2C_CST816S_ADDRESS;
+        tp_io_config.scl_speed_hz = 400 * 1000;
+        tp_io_config.control_phase_bytes = 1;
+        tp_io_config.dc_bit_offset = 0;
+        tp_io_config.lcd_cmd_bits = 8;
+        tp_io_config.lcd_param_bits = 0;
+        tp_io_config.flags.disable_control_phase = 1;
+        
+        esp_err_t ret = esp_lcd_new_panel_io_i2c(i2c_bus_, &tp_io_config, &tp_io_handle);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to create touch I2C panel IO: %d", ret);
+            return;
+        }
+
+        ret = esp_lcd_touch_new_i2c_cst816s(tp_io_handle, &tp_cfg, &tp);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to initialize CST816S touch controller: %d", ret);
+            return;
+        }
+
+        gpio_set_pull_mode(TP_PIN_NUM_INT, GPIO_PULLUP_ONLY);
+        cst816s_read_data_orig = tp->read_data;
+        tp->read_data = cst816s_read_data_polling_wrapper;
+        touch_handle_ = tp;
+
+        const lvgl_port_touch_cfg_t touch_cfg = {
+            .disp = lv_display_get_default(),
+            .handle = tp,
+        };
+        if (touch_cfg.disp != nullptr) {
+            lvgl_port_add_touch(&touch_cfg);
+            ESP_LOGI(TAG, "Touch panel initialized successfully (LVGL)");
+        } else {
+            ESP_LOGI(TAG, "Touch panel initialized successfully (Emote Gesture Task)");
+            xTaskCreate(TouchGestureTask, "touch_gesture", 3072, this, 3, &touch_task_handle_);
+        }
     }
 
     void InitializeButtons() {
@@ -366,12 +540,20 @@ private:
     }
 
 public:
+    ~CustomBoard() {
+        if (touch_task_handle_ != nullptr) {
+            vTaskDelete(touch_task_handle_);
+            touch_task_handle_ = nullptr;
+        }
+    }
+
     CustomBoard() :
         boot_button_(BOOT_BUTTON_GPIO) {
         InitializeI2c();
         InitializeTca9554();
         InitializeSpi();
         Initializest77916Display();
+        InitializeTouch();
         InitializeButtons();
         GetBacklight()->RestoreBrightness();
     }
