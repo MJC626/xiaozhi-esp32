@@ -13,6 +13,7 @@
 
 #include <vector>
 #include <string>
+#include <cstdlib>
 #include <esp_log.h>
 #include <esp_timer.h>
 #include <esp_lcd_panel_vendor.h>
@@ -198,6 +199,9 @@ private:
         uint16_t start_x = 0, start_y = 0;
         uint16_t last_x = 0, last_y = 0;
         int64_t start_time = 0;
+        
+        // 初始化随机数生成器
+        srand(esp_random());
 
         const std::vector<std::string> emotions = {
             "neutral", "happy", "laughing", "funny", "sad", "angry", "crying",
@@ -230,10 +234,10 @@ private:
                     std::string target_emotion = "";
 
                     if (abs(dx) < 30 && abs(dy) < 30 && dt < 500) {
-                        // 单击 Tap：循环切换表情
-                        board->current_emotion_index_ = (board->current_emotion_index_ + 1) % emotions.size();
+                        // 单击 Tap：随机播放表情
+                        board->current_emotion_index_ = rand() % emotions.size();
                         target_emotion = emotions[board->current_emotion_index_];
-                        ESP_LOGI(TAG, "Touch Gesture: Tap -> %s", target_emotion.c_str());
+                        ESP_LOGI(TAG, "Touch Gesture: Tap -> %s (random)", target_emotion.c_str());
                     } else if (dy > 50 && abs(dx) < 50) {
                         // 下滑 Swipe Down：强制安全切换状态为 Idle
                         ESP_LOGI(TAG, "Touch Gesture: Swipe Down -> Force transition to Idle");
@@ -360,13 +364,6 @@ private:
         ESP_ERROR_CHECK(esp_lcd_panel_swap_xy(panel, false));
         ESP_ERROR_CHECK(esp_lcd_panel_mirror(panel, false, false));
 
-        // ---------------- 纯硬件直刷红屏 & 100% 亮度测试 ----------------
-        ESP_LOGI(TAG, "Testing pure hardware draw (RED SCREEN & 100%% Brightness)...");
-        esp_lcd_panel_co5300_set_brightness(panel, 100);
-        std::vector<uint16_t> red_buf(DISPLAY_WIDTH, 0xF800); // RGB565 红色
-        for (int y = 0; y < DISPLAY_HEIGHT; y++) {
-            esp_lcd_panel_draw_bitmap(panel, 0, y, DISPLAY_WIDTH, y + 1, red_buf.data());
-        }
         // ----------------------------------------------------------------
 
         // 预分配 270 度软件旋转缓冲区 (完全对齐 lcd_init_qspi_co5300.c)
