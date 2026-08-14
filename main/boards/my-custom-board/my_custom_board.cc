@@ -248,9 +248,7 @@ private:
 
                     if (!target_emotion.empty()) {
                         Application::GetInstance().Schedule([board, target_emotion]() {
-                            if (board->GetDisplay()) {
-                                board->GetDisplay()->SetEmotion(target_emotion.c_str());
-                            }
+                            board->PlayTemporaryEmotion(target_emotion.c_str(), 3500);
                         });
                     }
                 }
@@ -579,6 +577,7 @@ private:
     uint8_t low_battery_alert_mask_ = 0;
     int low_battery_plays_left_ = 0;
     int64_t next_low_battery_play_ms_ = 0;
+    int64_t next_charging_anim_play_ms_ = 0;
 
     static void emotion_reset_timer_callback(void* arg) {
         auto* self = static_cast<MyCustomBoard*>(arg);
@@ -599,7 +598,7 @@ private:
         }
     }
 
-    void PlayBatteryEmotion(const char* emotion, uint32_t duration_ms) {
+    void PlayTemporaryEmotion(const char* emotion, uint32_t duration_ms = 3500) {
 #if CONFIG_USE_EMOTE_MESSAGE_STYLE
         if (display_ == nullptr || emotion == nullptr) {
             return;
@@ -613,13 +612,17 @@ private:
         ShowTemporaryEmotion(emotion, duration_ms);
     }
 
+    void PlayBatteryEmotion(const char* emotion, uint32_t duration_ms) {
+        PlayTemporaryEmotion(emotion, duration_ms);
+    }
+
     void StartLowBatteryAlertSequence() {
         constexpr int kMaxPlays = 3;
         constexpr int64_t kIntervalMs = 5 * 60 * 1000;
 
         low_battery_plays_left_ = kMaxPlays - 1;
         next_low_battery_play_ms_ = (esp_timer_get_time() / 1000) + kIntervalMs;
-        PlayBatteryEmotion("low_battery", 4000);
+        PlayTemporaryEmotion("low_battery", 4000);
     }
 
     void HandleBatteryEmotions() {
@@ -630,15 +633,25 @@ private:
             return;
         }
 
+        const int64_t now_ms = esp_timer_get_time() / 1000;
+
         if (charging && !was_charging_) {
-            PlayBatteryEmotion("battery_connected", 4000);
             low_battery_alert_mask_ = 0;
             low_battery_plays_left_ = 0;
             next_low_battery_play_ms_ = 0;
+            next_charging_anim_play_ms_ = 0; // 插入充电器立即触发首次播放
         }
         was_charging_ = charging;
 
         if (charging) {
+            auto device_state = Application::GetInstance().GetDeviceState();
+            bool can_play_charging_anim = (device_state == kDeviceStateIdle || device_state == kDeviceStateStarting);
+
+            // 充电状态下持续循环播放充电动画（每 4 秒播放一次），仅在空闲状态下播放，避免打扰语音对话
+            if (can_play_charging_anim && now_ms >= next_charging_anim_play_ms_) {
+                PlayTemporaryEmotion("battery_connected", 4000);
+                next_charging_anim_play_ms_ = now_ms + 4000;
+            }
             return;
         }
 
@@ -649,9 +662,8 @@ private:
             return;
         }
 
-        const int64_t now_ms = esp_timer_get_time() / 1000;
         if (low_battery_plays_left_ > 0 && now_ms >= next_low_battery_play_ms_) {
-            PlayBatteryEmotion("low_battery", 4000);
+            PlayTemporaryEmotion("low_battery", 4000);
             low_battery_plays_left_--;
             if (low_battery_plays_left_ > 0) {
                 next_low_battery_play_ms_ = now_ms + 5 * 60 * 1000;
