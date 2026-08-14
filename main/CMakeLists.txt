@@ -1162,9 +1162,17 @@ if(CONFIG_BOARD_TYPE_ESP_VOCAT OR CONFIG_BOARD_TYPE_MY_CUSTOM_BOARD OR CONFIG_BO
         )
         file(MAKE_DIRECTORY "${EMOTE_EXTERNAL_PATH}/360_360")
         file(MAKE_DIRECTORY "${EMOTE_EXTERNAL_PATH}/emoji_large")
+        file(MAKE_DIRECTORY "${EMOTE_EXTERNAL_PATH}/wakenet")
         file(COPY "${EMOTE_ASSETS_PATH}/emoji_large/" DESTINATION "${EMOTE_EXTERNAL_PATH}/emoji_large")
         file(COPY "${EMOTE_ASSETS_PATH}/360_360/layout.json" DESTINATION "${EMOTE_EXTERNAL_PATH}/360_360")
         file(COPY "${EMOTE_ASSETS_PATH}/360_360/emote.json" DESTINATION "${EMOTE_EXTERNAL_PATH}/360_360")
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/assets/360_360/layout.json")
+            file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/assets/360_360/layout.json"
+                 DESTINATION "${EMOTE_EXTERNAL_PATH}/360_360")
+            set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/assets/360_360/layout.json"
+            )
+        endif()
         if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/assets/360_360/emote.json")
             file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/assets/360_360/emote.json"
                  DESTINATION "${EMOTE_EXTERNAL_PATH}/360_360")
@@ -1184,6 +1192,46 @@ if(CONFIG_BOARD_TYPE_ESP_VOCAT OR CONFIG_BOARD_TYPE_MY_CUSTOM_BOARD OR CONFIG_BO
                  DESTINATION "${EMOTE_EXTERNAL_PATH}/emoji_large")
             set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
                 "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/emoji/battery_connected.eaf"
+            )
+        endif()
+
+        # Build srmodels.bin dynamically based on current sdkconfig for emote assets
+        execute_process(
+            COMMAND python "${PROJECT_DIR}/scripts/build_default_assets.py"
+                    --sdkconfig "${SDKCONFIG}"
+                    --esp_sr_model_path "${ESP_SR_MODEL_PATH}"
+                    --srmodels_only "${EMOTE_EXTERNAL_PATH}/wakenet/srmodels.bin"
+            RESULT_VARIABLE SRMODELS_GEN_RES
+        )
+
+        # Map BUILTIN_TEXT_FONT to emote font name
+        # e.g., font_noto_sans_basic_16_4 -> font_puhui_common_16_4
+        set(EMOTE_FONT "font_puhui_common_20_4")
+        if(BUILTIN_TEXT_FONT MATCHES "14_1")
+            set(EMOTE_FONT "font_puhui_common_14_1")
+        elseif(BUILTIN_TEXT_FONT MATCHES "16_4")
+            set(EMOTE_FONT "font_puhui_common_16_4")
+        elseif(BUILTIN_TEXT_FONT MATCHES "20_4")
+            set(EMOTE_FONT "font_puhui_common_20_4")
+        elseif(BUILTIN_TEXT_FONT MATCHES "30_4")
+            set(EMOTE_FONT "font_puhui_common_30_4")
+        endif()
+
+        if(EXISTS "${EMOTE_EXTERNAL_PATH}/wakenet/srmodels.bin")
+            set(EMOTE_WAKENET "srmodels.bin")
+        else()
+            set(EMOTE_WAKENET "none")
+        endif()
+
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/assets/360_360/config.json")
+            file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/assets/360_360/config.json"
+                 DESTINATION "${EMOTE_EXTERNAL_PATH}/360_360")
+            set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/assets/360_360/config.json"
+            )
+        else()
+            file(WRITE "${EMOTE_EXTERNAL_PATH}/360_360/config.json"
+                "{\n  \"text_font\": \"${EMOTE_FONT}\",\n  \"emoji_collection\": \"emoji_large\",\n  \"wakenet_model\": \"${EMOTE_WAKENET}\"\n}\n"
             )
         endif()
     else()

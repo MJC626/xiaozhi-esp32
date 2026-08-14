@@ -808,12 +808,16 @@ def main():
     parser.add_argument('--sdkconfig', required=True, help='Path to sdkconfig file')
     parser.add_argument('--builtin_text_font', help='Builtin text font name (e.g., font_noto_sans_basic_16_4)')
     parser.add_argument('--emoji_collection', help='Default emoji collection name (e.g., noto-color-emoji_32)')
-    parser.add_argument('--output', required=True, help='Output path for assets.bin')
+    parser.add_argument('--output', help='Output path for assets.bin')
+    parser.add_argument('--srmodels_only', help='Output path for srmodels.bin only')
     parser.add_argument('--esp_sr_model_path', help='Path to ESP-SR model directory')
     parser.add_argument('--noto_fonts_path', help='Path to noto-fonts component directory')
     parser.add_argument('--extra_files', help='Path to extra files directory to be included in assets')
     
     args = parser.parse_args()
+    
+    if not args.output and not args.srmodels_only:
+        parser.error("Either --output or --srmodels_only is required")
     
     # Set default paths if not provided
     if not args.esp_sr_model_path or not args.noto_fonts_path:
@@ -868,6 +872,23 @@ def main():
     if multinet_model_paths:
         print(f"  multinet models: {', '.join(multinet_model_names)} (will be packaged)")
     
+    if args.srmodels_only:
+        if wakenet_model_paths or multinet_model_paths:
+            out_dir = os.path.dirname(os.path.abspath(args.srmodels_only))
+            ensure_dir(out_dir)
+            temp_build_dir = os.path.join(out_dir, "_temp_srmodels")
+            ensure_dir(temp_build_dir)
+            process_sr_models(wakenet_model_paths, multinet_model_paths, temp_build_dir, out_dir)
+            if os.path.exists(temp_build_dir):
+                shutil.rmtree(temp_build_dir)
+            generated = os.path.join(out_dir, "srmodels.bin")
+            if generated != os.path.abspath(args.srmodels_only) and os.path.exists(generated):
+                shutil.move(generated, args.srmodels_only)
+            print(f"Generated SR models: {args.srmodels_only}")
+        else:
+            print("No SR models to generate.")
+        return
+
     # Get text font path if needed
     text_font_path = get_text_font_path(args.builtin_text_font, args.noto_fonts_path)
     font_bundle_id = None
