@@ -376,7 +376,7 @@ private:
                                                                         QSPI_PIN_NUM_LCD_DATA1,
                                                                         QSPI_PIN_NUM_LCD_DATA2,
                                                                         QSPI_PIN_NUM_LCD_DATA3,
-                                                                        QSPI_LCD_H_RES * 80 * sizeof(uint16_t));
+                                                                        QSPI_LCD_H_RES * QSPI_LCD_V_RES * sizeof(uint16_t));
         ESP_ERROR_CHECK(spi_bus_initialize(QSPI_LCD_HOST, &bus_config, SPI_DMA_CH_AUTO));
     }
 
@@ -391,7 +391,7 @@ private:
             .dc_gpio_num = GPIO_NUM_NC,
             .spi_mode = 0,                     
             .pclk_hz = 3 * 1000 * 1000,      
-            .trans_queue_depth = 10,            
+            .trans_queue_depth = 1,            
             .on_color_trans_done = NULL,                            
             .user_ctx = NULL,                   
             .lcd_cmd_bits = 32,                 
