@@ -14,6 +14,7 @@
 #include <vector>
 #include <string>
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <esp_lcd_panel_vendor.h>
 #include <esp_lcd_panel_interface.h>
 #include <esp_heap_caps.h>
@@ -543,7 +544,7 @@ private:
         }
     }
 
-    uint16_t ReadBatteryVoltageMv() {
+    uint16_t ReadBatteryVoltageMv(int *out_raw = nullptr, int *out_adc_mv = nullptr) {
         InitializeAdc();
         if (!adc_handle_) {
             return 0;
@@ -565,12 +566,143 @@ private:
             voltage_mv = (avg_raw * 3300) / 4095;
         }
 
+        if (out_raw) *out_raw = avg_raw;
+        if (out_adc_mv) *out_adc_mv = voltage_mv;
+
         // 两个 100K 1:1 分压电阻：真实电池电压 = ADC 测量电压 * 2
         return (uint16_t)(voltage_mv * 2);
     }
 
+    esp_timer_handle_t emotion_reset_timer_ = nullptr;
+    TaskHandle_t battery_task_handle_ = nullptr;
+    bool was_charging_ = false;
+    uint8_t low_battery_alert_mask_ = 0;
+    int low_battery_plays_left_ = 0;
+    int64_t next_low_battery_play_ms_ = 0;
+
+    static void emotion_reset_timer_callback(void* arg) {
+        auto* self = static_cast<MyCustomBoard*>(arg);
+        if (self && self->display_ != nullptr) {
+            self->display_->SetEmotion("neutral");
+        }
+    }
+
+    void ShowTemporaryEmotion(const char* emotion, uint32_t duration_ms) {
+        if (display_ == nullptr || emotion == nullptr) {
+            return;
+        }
+        display_->SetEmotion(emotion);
+        if (emotion_reset_timer_ != nullptr) {
+            esp_timer_stop(emotion_reset_timer_);
+            esp_timer_start_once(emotion_reset_timer_,
+                                 static_cast<uint64_t>(duration_ms) * 1000ULL);
+        }
+    }
+
+    void PlayBatteryEmotion(const char* emotion, uint32_t duration_ms) {
+#if CONFIG_USE_EMOTE_MESSAGE_STYLE
+        if (display_ == nullptr || emotion == nullptr) {
+            return;
+        }
+        auto* emote_display = dynamic_cast<emote::EmoteDisplay*>(display_);
+        if (emote_display != nullptr) {
+            emote_display->InsertAnimDialog(emotion, duration_ms);
+            return;
+        }
+#endif
+        ShowTemporaryEmotion(emotion, duration_ms);
+    }
+
+    void StartLowBatteryAlertSequence() {
+        constexpr int kMaxPlays = 3;
+        constexpr int64_t kIntervalMs = 5 * 60 * 1000;
+
+        low_battery_plays_left_ = kMaxPlays - 1;
+        next_low_battery_play_ms_ = (esp_timer_get_time() / 1000) + kIntervalMs;
+        PlayBatteryEmotion("low_battery", 4000);
+    }
+
+    void HandleBatteryEmotions() {
+        int level = 0;
+        bool charging = false;
+        bool discharging = false;
+        if (!GetBatteryLevel(level, charging, discharging)) {
+            return;
+        }
+
+        if (charging && !was_charging_) {
+            PlayBatteryEmotion("battery_connected", 4000);
+            low_battery_alert_mask_ = 0;
+            low_battery_plays_left_ = 0;
+            next_low_battery_play_ms_ = 0;
+        }
+        was_charging_ = charging;
+
+        if (charging) {
+            return;
+        }
+
+        if (level > 12) {
+            low_battery_alert_mask_ = 0;
+            low_battery_plays_left_ = 0;
+            next_low_battery_play_ms_ = 0;
+            return;
+        }
+
+        const int64_t now_ms = esp_timer_get_time() / 1000;
+        if (low_battery_plays_left_ > 0 && now_ms >= next_low_battery_play_ms_) {
+            PlayBatteryEmotion("low_battery", 4000);
+            low_battery_plays_left_--;
+            if (low_battery_plays_left_ > 0) {
+                next_low_battery_play_ms_ = now_ms + 5 * 60 * 1000;
+            }
+        }
+
+        if (level <= 5 && (low_battery_alert_mask_ & 0x02) == 0) {
+            low_battery_alert_mask_ |= 0x02;
+            StartLowBatteryAlertSequence();
+            return;
+        }
+
+        if (level <= 10 && (low_battery_alert_mask_ & 0x01) == 0) {
+            low_battery_alert_mask_ |= 0x01;
+            StartLowBatteryAlertSequence();
+        }
+    }
+
+    static void battery_task(void* arg) {
+        auto* self = static_cast<MyCustomBoard*>(arg);
+        while (true) {
+            if (self != nullptr) {
+                self->HandleBatteryEmotions();
+            }
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
+    }
+
 public:
+    ~MyCustomBoard() {
+        if (battery_task_handle_ != nullptr) {
+            vTaskDelete(battery_task_handle_);
+            battery_task_handle_ = nullptr;
+        }
+        if (emotion_reset_timer_ != nullptr) {
+            esp_timer_stop(emotion_reset_timer_);
+            esp_timer_delete(emotion_reset_timer_);
+            emotion_reset_timer_ = nullptr;
+        }
+    }
+
     MyCustomBoard() : boot_button_(BOOT_BUTTON_GPIO) {
+        const esp_timer_create_args_t emotion_timer_args = {
+            .callback = &MyCustomBoard::emotion_reset_timer_callback,
+            .arg = this,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "emotion_rst",
+            .skip_unhandled_events = true,
+        };
+        ESP_ERROR_CHECK(esp_timer_create(&emotion_timer_args, &emotion_reset_timer_));
+
         InitializeI2c();
         InitializeTca9554();
         InitializeSpi();
@@ -580,6 +712,15 @@ public:
         InitializeCamera();
         InitializeTools();
         GetBacklight()->RestoreBrightness();
+
+        int level = 0;
+        bool charging = false;
+        bool discharging = false;
+        if (GetBatteryLevel(level, charging, discharging)) {
+            was_charging_ = charging;
+        }
+        xTaskCreatePinnedToCore(battery_task, "batteryTask", 3 * 1024, this, 6,
+                                &battery_task_handle_, 0);
     }
 
     virtual AudioCodec* GetAudioCodec() override {
@@ -611,9 +752,59 @@ public:
         return camera_;
     }
 
+    uint16_t last_stable_voltage_mv_ = 0;
+    int charge_detect_count_ = 0;
+    int discharge_detect_count_ = 0;
+    bool is_charging_ = false;
+
+    bool DetectChargingStatus(uint16_t current_voltage_mv) {
+        if (last_stable_voltage_mv_ == 0) {
+            last_stable_voltage_mv_ = current_voltage_mv;
+            ESP_LOGI(TAG, "Battery init stable voltage: %d mV", current_voltage_mv);
+            return false;
+        }
+
+        int diff = (int)current_voltage_mv - (int)last_stable_voltage_mv_;
+
+        // 插入充电器时，电池端电压通常会产生明显的阶跃上涨 (>= 60mV)
+        if (diff >= 60) {
+            charge_detect_count_++;
+            discharge_detect_count_ = 0;
+            ESP_LOGI(TAG, "Battery voltage jump up detected: current=%d mV, stable=%d mV, diff=+%d mV (charge_count=%d/2)",
+                     current_voltage_mv, last_stable_voltage_mv_, diff, charge_detect_count_);
+            if (charge_detect_count_ >= 2) { // 连续2次采样确认电压上升趋势
+                if (!is_charging_) {
+                    ESP_LOGI(TAG, "Charging state CHANGED -> CHARGING (voltage=%d mV)", current_voltage_mv);
+                }
+                is_charging_ = true;
+                last_stable_voltage_mv_ = current_voltage_mv;
+            }
+        } else if (diff <= -50) { // 拔出充电器时，电压明显回落 (<= -50mV)
+            discharge_detect_count_++;
+            charge_detect_count_ = 0;
+            ESP_LOGI(TAG, "Battery voltage drop detected: current=%d mV, stable=%d mV, diff=%d mV (discharge_count=%d/2)",
+                     current_voltage_mv, last_stable_voltage_mv_, diff, discharge_detect_count_);
+            if (discharge_detect_count_ >= 2) {
+                if (is_charging_) {
+                    ESP_LOGI(TAG, "Charging state CHANGED -> DISCHARGING (voltage=%d mV)", current_voltage_mv);
+                }
+                is_charging_ = false;
+                last_stable_voltage_mv_ = current_voltage_mv;
+            }
+        } else {
+            // 平稳放电或平稳充电过程中，用低通滤波缓慢跟进基准电压
+            last_stable_voltage_mv_ = (uint16_t)((last_stable_voltage_mv_ * 7 + current_voltage_mv) / 8);
+        }
+
+        return is_charging_;
+    }
+
     virtual bool GetBatteryLevel(int &level, bool &charging, bool &discharging) override {
-        uint16_t voltage_mv = ReadBatteryVoltageMv();
+        int raw_adc = 0;
+        int adc_mv = 0;
+        uint16_t voltage_mv = ReadBatteryVoltageMv(&raw_adc, &adc_mv);
         if (voltage_mv == 0) {
+            ESP_LOGW(TAG, "Battery voltage read returned 0 (ADC failed)");
             return false;
         }
 
@@ -626,8 +817,17 @@ public:
             level = (voltage_mv - 3300) * 100 / (4200 - 3300);
         }
 
-        charging = false;
-        discharging = true;
+        charging = DetectChargingStatus(voltage_mv);
+        discharging = !charging;
+
+        static uint32_t sample_counter = 0;
+        sample_counter++;
+        if (sample_counter % 5 == 0) {
+            ESP_LOGI(TAG, "Battery ADC: raw=%d, pin_mv=%d, batt_mv=%d, level=%d%%, charging=%s, stable_mv=%d, cali=%s",
+                     raw_adc, adc_mv, voltage_mv, level, charging ? "true" : "false", last_stable_voltage_mv_,
+                     adc_cali_enabled_ ? "curve_fitting" : "raw_linear");
+        }
+
         return true;
     }
 };
