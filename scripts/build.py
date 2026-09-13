@@ -410,6 +410,10 @@ _OPTIONAL_CAMERA_ENABLE_SYMBOLS = {
     # build, but expose them automatically for an explicitly enabled variant.
     "CONFIG_BOARD_TYPE_ESP_VOCAT": "CONFIG_ESP_VIDEO_ENABLE_USB_UVC_VIDEO_DEVICE",
 }
+# Match both `new Esp32Camera` and `new (std::nothrow) Esp32Camera` (and EspVideo).
+_COMMON_CAMERA_CONSTRUCTOR_RE = re.compile(
+    r"\bnew(?:\s*\(\s*std::nothrow\s*\))?\s+Esp(?:32Camera|Video)\b"
+)
 
 
 def _sdkconfig_assignments(options: list[str]) -> dict[str, str]:
@@ -586,7 +590,7 @@ def _build_option_definitions(
 
     camera_enable_symbol = _OPTIONAL_CAMERA_ENABLE_SYMBOLS.get(board_config)
     has_common_camera = (
-        ("new Esp32Camera" in source or "new EspVideo" in source)
+        _COMMON_CAMERA_CONSTRUCTOR_RE.search(source) is not None
         and (
             camera_enable_symbol is None
             or assignments.get(camera_enable_symbol) == "y"
@@ -1112,7 +1116,14 @@ def _symbol_supports_target(symbol: str, target: str) -> bool:
             continue
         if in_symbol and stripped.startswith(("config ", "choice ", "endchoice", "menu ", "endmenu")):
             break
-        if in_symbol and "depends on" in stripped and target_flag in stripped:
+        if (
+            in_symbol
+            and "depends on" in stripped
+            and re.search(
+                rf"(?<![A-Za-z0-9_]){re.escape(target_flag)}(?![A-Za-z0-9_])",
+                stripped,
+            )
+        ):
             return True
     return False
 
@@ -1125,9 +1136,26 @@ def _resolve_board_config(
     variant_name: Optional[str] = None,
 ) -> str:
     """Resolve CONFIG_BOARD_TYPE_xxx for current board build."""
+    def validate_target(symbol: str) -> str:
+        if not _symbol_supports_target(symbol, target):
+            raise ValueError(
+                f"Board config {symbol} for {board_type!r} does not support "
+                f"target {target!r}"
+            )
+        return symbol
+
     explicit = _extract_board_config_from_sdkconfig_append(sdkconfig_append)
+    candidates = _find_board_config_candidates(board_type)
+    if not candidates:
+        raise ValueError(f"Cannot find board config symbol for {board_type}")
+
     if explicit and _board_config_symbol_exists(explicit):
-        return explicit
+        if explicit not in candidates:
+            raise ValueError(
+                f"Board config {explicit} does not select board directory "
+                f"{board_type!r}"
+            )
+        return validate_target(explicit)
     if explicit:
         print(
             f"[WARN] Explicit board config {explicit} does not exist in Kconfig; "
@@ -1135,11 +1163,8 @@ def _resolve_board_config(
             file=sys.stderr,
         )
 
-    candidates = _find_board_config_candidates(board_type)
-    if not candidates:
-        raise ValueError(f"Cannot find board config symbol for {board_type}")
     if len(candidates) == 1:
-        return candidates[0]
+        return validate_target(candidates[0])
 
     if variant_name:
         expected = "CONFIG_BOARD_TYPE_" + re.sub(
@@ -1149,11 +1174,11 @@ def _resolve_board_config(
         ).strip("_")
         by_variant = [candidate for candidate in candidates if candidate == expected]
         if len(by_variant) == 1:
-            return by_variant[0]
+            return validate_target(by_variant[0])
 
     by_target = [c for c in candidates if _symbol_supports_target(c, target)]
     if len(by_target) == 1:
-        return by_target[0]
+        return validate_target(by_target[0])
     if len(by_target) > 1:
         selected = by_target[0]
         print(
@@ -1161,32 +1186,12 @@ def _resolve_board_config(
             f"target-matched candidates={by_target}, selecting first: {selected}",
             file=sys.stderr,
         )
-        return selected
+        return validate_target(selected)
 
-    target_u = target.upper()
-    target_short = target_u.replace("ESP32", "")
-    by_name = [
-        c for c in candidates
-        if target_u in c or f"_{target_short}" in c
-    ]
-    if len(by_name) == 1:
-        return by_name[0]
-    if len(by_name) > 1:
-        selected = by_name[0]
-        print(
-            f"[WARN] Ambiguous board config for {board_type} (target={target}), "
-            f"name-matched candidates={by_name}, selecting first: {selected}",
-            file=sys.stderr,
-        )
-        return selected
-
-    selected = candidates[0]
-    print(
-        f"[WARN] Ambiguous board config for {board_type} (target={target}), "
-        f"candidates={candidates}, selecting first: {selected}",
-        file=sys.stderr,
+    raise ValueError(
+        f"No board config for {board_type!r} supports target {target!r}; "
+        f"candidates: {candidates}"
     )
-    return selected
 
 
 # Kconfig "select" entries are not automatically applied when we simply append
@@ -1201,6 +1206,13 @@ _AUTO_SELECT_RULES: dict[str, list[str]] = {
         "CONFIG_BT_BLE_BLUFI_ENABLE=y",
     ],
 }
+
+# sdkconfig.defaults.esp32s3 keeps a 1MB LVGL TLSF pool for PSRAM. Without
+# PSRAM that pool becomes a .dram0.bss array and overflows internal SRAM.
+_NO_SPIRAM_LVGL_OPTIONS = [
+    "CONFIG_LV_USE_BUILTIN_MALLOC=n",
+    "CONFIG_LV_USE_CLIB_MALLOC=y",
+]
 
 
 def _apply_auto_selects(sdkconfig_append: list[str]) -> list[str]:
@@ -1217,6 +1229,10 @@ def _apply_auto_selects(sdkconfig_append: list[str]) -> list[str]:
                 # must do the same instead of keeping the earlier value.
                 items = _merge_sdkconfig_options(items, deps)
                 break
+
+    assignments = _sdkconfig_assignments(items)
+    if assignments.get("CONFIG_SPIRAM") == "n":
+        items = _merge_sdkconfig_options(items, _NO_SPIRAM_LVGL_OPTIONS)
 
     return items
 
@@ -1505,7 +1521,9 @@ def build_board(
         )
 
         user_options: list[str] = []
-        validation_symbols: list[tuple[list[str], str]] = []
+        validation_symbols: list[tuple[list[str], str]] = [
+            ([board_type_config], "board selection"),
+        ]
         build_option_sdkconfig: list[str] = []
         selected_language = None
         selected_wake_word = None
